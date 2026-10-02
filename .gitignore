@@ -1,0 +1,19 @@
+# Runtime data and confidential source material
+data/
+sources/
+project_sources/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jpg
+*.png
+*.pdf
+*.zip
+import-yy.mjs
+import-bank.mjs
+node_modules/
+*.log
