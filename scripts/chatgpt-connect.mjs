@@ -13,9 +13,11 @@ function openBrowser(url) {
   browserProcess.unref();
 }
 async function verifyConnection() {
+  console.log('確認1/2：利用可能なChatGPTモデルを取得します。');
   const client=createPlanClient();const [model]=await client.models();if(!model)throw new Error('利用できるモデルがありません');
+  console.log('確認2/2：架空の短文でAI応答の完了を確認します。');
   const result=await client.infer({model:model.slug,input:'Reply with exactly: Token sharing works.'});
-  if(result.trim()!=='Token sharing works.')throw new Error('接続テストの応答を確認できません');
+  if(!result.trim())throw new Error('接続テストの応答を確認できません');
   console.log('ChatGPT契約枠での応答を確認しました。');
 }
 try {
@@ -28,4 +30,9 @@ try {
     console.log(status.sharing?'ChatGPT契約枠の利用許可を確認しました。':'本人認証のみ完了。契約枠の利用は許可されていません。');
     if(action==='setup') {if(!status.sharing)throw new Error('契約枠の利用許可が必要です');await verifyConnection();}
   }
-}catch {console.error('ChatGPT接続を完了できませんでした。認証または利用枠を確認してください。認証情報をチャットへ貼り付けないでください。');process.exitCode=1;}
+}catch(error) {
+  console.error('ChatGPT接続を完了できませんでした。');
+  if(error.safeDiagnostic) {console.error('失敗箇所：'+error.safeDiagnostic.stage);if(error.safeDiagnostic.httpStatus)console.error('HTTP status: '+error.safeDiagnostic.httpStatus);if(error.safeDiagnostic.code)console.error('Error code: '+error.safeDiagnostic.code);}
+  else console.error('通信・認証ファイル・保存先を確認してください。');
+  console.error('認証情報は表示していません。上の失敗箇所とHTTP statusだけを共有してください。');process.exitCode=1;
+}

@@ -35,6 +35,13 @@ function response(events,split=false) {
   const data=events.map(e=>'data: '+JSON.stringify(e)+'\r\n\r\n').join('');const bytes=new TextEncoder().encode(data);
   return new Response(new ReadableStream({start(controller){if(split)for(const b of bytes)controller.enqueue(new Uint8Array([b]));else controller.enqueue(bytes);controller.close();}}));
 }
+test('failure diagnostics exclude server messages and credentials',async()=>{
+  const r=Response.json({error:{code:'insufficient_scope',message:'private-secret-token'}},{status:403});
+  await assert.rejects(readCompletedText(r),error=>{
+    assert.deepEqual(error.safeDiagnostic,{stage:'AI応答の取得',httpStatus:403,code:'insufficient_scope'});
+    assert.equal(JSON.stringify(error.safeDiagnostic).includes('private-secret-token'),false);return true;
+  });
+});
 test('SSE handles split UTF-8, requires completion, rejects failed/incomplete streams',async()=>{
   assert.equal(await readCompletedText(response([{type:'response.output_text.delta',delta:'日本語'},{type:'response.completed'}],true)),'日本語');
   await assert.rejects(readCompletedText(response([{type:'response.output_text.delta',delta:'partial'}])));
@@ -62,7 +69,7 @@ test('refresh is serialized, rotates credentials atomically and never falls back
     const file=path.join(dir,'connection.json');writeFileSync(file,JSON.stringify({client_id:'oaiapp_test',access_token:'old-token',refresh_token:'old-refresh',scopes:['chatgpt.tokens.use.direct'],expires_at:0}),{mode:0o600});
     const request=async(url,options)=>{
       if(url.endsWith('/oauth/token')) {refreshes++;assert.equal(options.body.get('grant_type'),'refresh_token');assert.equal(options.body.has('scope'),false);return Response.json({access_token:'new-token',refresh_token:'new-refresh',token_type:'Bearer',expires_in:3600});}
-      assert.equal(options.headers.Authorization,'Bearer new-token');return Response.json({models:[]});
+      assert.equal(options.headers.Authorization,'Bearer new-token');return Response.json({models:[{slug:'test-model',visibility:'list'}]});
     };
     const c=createPlanClient({dir,request});await Promise.all([c.models(),c.models()]);assert.equal(refreshes,1);
     const saved=JSON.parse(readFileSync(file));assert.equal(saved.refresh_token,'new-refresh');assert.ok(saved.scopes.includes('chatgpt.tokens.use.direct'));
