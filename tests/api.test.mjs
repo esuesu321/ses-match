@@ -25,6 +25,15 @@ test('API: CRUD、重複、入力保持、NG判定、履歴、再起動後の永
     assert.equal((await call(`/api/jobs/${roleA.value.id}`)).value.raw,raw);
     assert.ok((await call('/api/parse','POST',{raw})).value.duplicateId);
     assert.equal((await call('/api/jobs','POST',{title:''})).status,400);
+    const mailRaw='案件名：架空メール案件\n外国籍：不可';
+    const mail=await call('/api/import/mail','POST',{raw:mailRaw,subject:'架空案件',receivedAt:'2026-10-13'});
+    assert.equal(mail.status,200);assert.equal(mail.value.draft.source,'mail');assert.equal(mail.value.draft.paymentDays,35);
+    assert.equal((await call('/api/state')).value.jobs.length,3,'抽出では保存しない');
+    const savedMail=await call('/api/jobs','POST',mail.value.draft);assert.equal(savedMail.status,201);
+    assert.equal((await call('/api/import/mail','POST',{raw:mailRaw})).value.duplicateId,savedMail.value.id);
+    assert.equal((await call('/api/import/mail','POST',{raw:'別本文',useAi:true,model:'test'})).status,409);
+    assert.equal((await call('/api/import/mail','POST',{raw:'a'.repeat(20001)})).status,400);
+
     assert.equal((await call('/api/jobs','POST',{title:'別サイト'},'https://example.com')).status,403);
     const p=await call('/api/people','POST',{name:'API架空要員',nationality:'中国',contract:'freelance',experiences:[]});assert.equal(p.status,201);
     const evaluation=await call('/api/match','POST',{jobId,personId:p.value.id});assert.equal(evaluation.value.results[0].status,'対象外');assert.equal((await call('/api/history')).value.length,1);

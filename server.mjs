@@ -6,8 +6,9 @@ import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {match} from './lib/matching.mjs';
 import {parseLine} from './lib/parser.mjs';
+import {mailInput,manualMailDraft} from './lib/mail-import.mjs';
 import {validate} from './lib/validation.mjs';
-import {aiConfigured,assessSkills,usesChatGPTPlan,chatGPTStatus,chatGPTModels} from './lib/ai.mjs';
+import {aiConfigured,assessSkills,usesChatGPTPlan,chatGPTStatus,chatGPTModels,extractMail} from './lib/ai.mjs';
 import {createAccess} from './lib/access.mjs';
 import {recommendationFor,selectRecommendations} from './lib/recommendations.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,7 @@ async function body(req){let text='';for await(const chunk of req){text+=chunk;i
 function json(res,value,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
 const port=Number(process.env.PORT || 4317);
 const access=createAccess(process.env,port);
+let mailBusy=false;
 const server=http.createServer(async(req,res)=>{
   try{
     const denied=access(req,res);if(denied)return json(res,{error:denied.message},denied.status);
@@ -36,6 +38,20 @@ const server=http.createServer(async(req,res)=>{
       return json(res,{models:await chatGPTModels()});
     }
     if(url.pathname==='/api/parse' && req.method==='POST'){const input=await body(req);if(typeof input.raw!=='string' || !input.raw.trim())bad('案件本文を貼り付けてください');const parsed=parseLine(input.raw);const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===input.raw.normalize('NFKC').trim());return json(res,{draft:parsed,duplicateId:duplicate?.id || null,warnings:['ラベル形式の項目だけを抽出しています。登録前に本文と照合してください。','年月のみの開始時期、商流、精算、出社条件などは手動確認が必要です。']});}
+    if(url.pathname==='/api/import/mail' && req.method==='POST'){
+      const input=await body(req);const m=mailInput(input);
+      const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===m.raw.normalize('NFKC').trim());
+      if(duplicate)return json(res,{duplicateId:duplicate.id,draft:null,warnings:[]});
+      let draft;
+      if(input.useAi){
+        if(!usesChatGPTPlan() || !aiConfigured())bad('ChatGPT契約枠への接続が必要です。手動抽出は利用できます',409);
+        if(typeof input.model!=='string' || !input.model || input.model.length>200)bad('ChatGPTモデルを選択してください');
+        if(mailBusy)bad('別の本文を抽出中です。完了後に再実行してください',429);
+        mailBusy=true;
+        try{draft=await extractMail(m,{model:input.model});}catch{bad('AI抽出を完了できませんでした。本文を保持したまま手動抽出を利用できます',502);}finally{mailBusy=false;}
+      }else draft=manualMailDraft(m);
+      return json(res,{draft,duplicateId:null,warnings:['まだ登録されていません。原文と全項目を照合・修正して保存してください。',input.useAi?'AIの引用根拠も確認してください。引用があっても解釈が正しいとは限りません。':'ラベル形式だけの抽出です。文章形式や複数案件は1案件ずつ手動で確認してください。','未記載の支払いサイトは35日を初期値としています。実際の条件は確認が必要です。']});
+    }
     const recordRoute=url.pathname.match(/^\/api\/(jobs|people)(?:\/([^/]+))?$/);
     if(recordRoute){const [,kind,id]=recordRoute;
       if(req.method==='GET')return json(res,id?get(kind,id) || bad('見つかりません',404):list(kind));
