@@ -32,6 +32,7 @@ const server=http.createServer(async(req,res)=>{
     const denied=access(req,res);if(denied)return json(res,{error:denied.message},denied.status);
     const url=new URL(req.url,`http://127.0.0.1:${port}`);
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
+    if(url.pathname==='/api/health' && req.method==='GET'){db.prepare('SELECT 1').get();return json(res,{ok:true});}
     if(url.pathname==='/api/state' && req.method==='GET')return json(res,{jobs:list('jobs'),people:list('people'),aiConfigured:aiConfigured(),aiProvider:usesChatGPTPlan()?'chatgpt_plan':'legacy',chatGPT:usesChatGPTPlan()?chatGPTStatus():null,integrations:[{name:'LINE',state:'manual'},{name:'Gmail',state:'planned'},{name:'Google Drive',state:'planned'}]});
     if(url.pathname==='/api/chatgpt/models' && req.method==='GET') {
       if(!usesChatGPTPlan())bad('ChatGPT契約枠への接続を設定してください',409);
