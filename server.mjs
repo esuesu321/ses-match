@@ -18,9 +18,21 @@ const dbPath=process.env.SES_DB || path.join(root,'data','ses.sqlite');
 mkdirSync(path.dirname(dbPath),{recursive:true,mode:0o700});
 const db=new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS records_kind ON records(kind); CREATE TABLE IF NOT EXISTS evaluations (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, person_id TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);`);
-const list=kind=>db.prepare('SELECT body FROM records WHERE kind=? ORDER BY updated_at DESC').all(kind).map(r=>JSON.parse(r.body));
-const get=(kind,id)=>{const r=db.prepare('SELECT body FROM records WHERE kind=? AND id=?').get(kind,id);return r?JSON.parse(r.body):null;};
-const write=(kind,input,id=randomUUID())=>{const now=new Date().toISOString();const old=get(kind,id);const record={...validate(kind,input),id,createdAt:old?.createdAt || now,updatedAt:now};db.prepare('INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at').run(id,kind,JSON.stringify(record),now);return record;};
+// Old records receive a stable revision without rewriting or migrating the database.
+const decode=body=>{const record=JSON.parse(body);return {...record,revision:record.revision || createHash('sha256').update(body).digest('hex')};};
+const list=kind=>db.prepare('SELECT body FROM records WHERE kind=? ORDER BY updated_at DESC').all(kind).map(r=>decode(r.body));
+const get=(kind,id)=>{const r=db.prepare('SELECT body FROM records WHERE kind=? AND id=?').get(kind,id);return r?decode(r.body):null;};
+const requireRevision=(input,current)=>{
+  if(!input || typeof input.revision!=='string' || !input.revision)bad('最新の画面から操作してください。更新情報がありません',428);
+  if(input.revision!==current.revision){const error=new Error('別の画面で更新されています。入力を保持したまま、最新の内容と比較してください');error.status=409;error.code='record_conflict';error.current=current;throw error;}
+};
+const write=(kind,input,id)=>{
+ const old=id?get(kind,id):null;
+ if(id && !old)bad('見つかりません',404);
+ if(old)requireRevision(input,old);
+ const now=new Date().toISOString(),record={...validate(kind,input),id:id || randomUUID(),revision:randomUUID(),createdAt:old?.createdAt || now,updatedAt:now};
+ db.prepare('INSERT INTO records VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at').run(record.id,kind,JSON.stringify(record),now);return record;
+};
 const bad=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
 async function body(req){let text='';for await(const chunk of req){text+=chunk;if(text.length>150000)bad('入力が長すぎます',413);}try{return JSON.parse(text || '{}');}catch{bad('JSON形式が不正です');}}
 function json(res,value,status=200){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));}
@@ -57,8 +69,8 @@ const server=http.createServer(async(req,res)=>{
     if(recordRoute){const [,kind,id]=recordRoute;
       if(req.method==='GET')return json(res,id?get(kind,id) || bad('見つかりません',404):list(kind));
       if(req.method==='POST' && !id){const input=await body(req);if(kind==='jobs' && input.raw && list(kind).some(j=>j.raw?.normalize('NFKC').trim()===input.raw.normalize('NFKC').trim() && (j.position||'')===(input.position||'')))bad('同じ案件本文が登録されています',409);return json(res,write(kind,input),201);}
-      if(req.method==='PUT' && id){if(!get(kind,id))bad('見つかりません',404);return json(res,write(kind,await body(req),id));}
-      if(req.method==='DELETE' && id){if(!get(kind,id))bad('見つかりません',404);db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind,id);return json(res,{ok:true});}
+      if(req.method==='PUT' && id){const input=await body(req);return json(res,write(kind,input,id));}
+      if(req.method==='DELETE' && id){const input=await body(req),current=get(kind,id);if(!current)bad('見つかりません',404);requireRevision(input,current);db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind,id);return json(res,{ok:true});}
     }
     if(url.pathname==='/api/match' && req.method==='POST'){
       const input=await body(req);if(input.useAi!==undefined && typeof input.useAi!=='boolean')bad('AI指定が不正です');
@@ -79,11 +91,11 @@ const server=http.createServer(async(req,res)=>{
     if(url.pathname==='/api/history' && req.method==='GET')return json(res,db.prepare('SELECT body FROM evaluations ORDER BY created_at DESC LIMIT 50').all().map(r=>JSON.parse(r.body)));
     if(url.pathname.startsWith('/api/'))bad('該当する操作はありません',404);
     if(req.method!=='GET')bad('許可されていない操作です',405);
-    const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/favicon.svg':'favicon.svg'};
+    const files={'/':'index.html','/app.js':'app.js','/conflicts.js':'conflicts.js','/style.css':'style.css','/favicon.svg':'favicon.svg'};
     const file=files[url.pathname];if(!file)bad('ページが見つかりません',404);
     res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     res.writeHead(200,{'Content-Type':({'html':'text/html','js':'text/javascript','css':'text/css','svg':'image/svg+xml'}[file.split('.').pop()])+'; charset=utf-8'});res.end(readFileSync(path.join(root,'public',file)));
-  }catch(e){json(res,{error:e.status?e.message:'保存・読み込みに失敗しました。入力を保持して再試行してください。'},e.status || 500);if(!e.status)console.error('SES MATCH request failed');}
+  }catch(e){json(res,{...(e.code==='record_conflict'?{code:e.code,current:e.current}:{}),error:e.status?e.message:'保存・読み込みに失敗しました。入力を保持して再試行してください。'},e.status || 500);if(!e.status)console.error('SES MATCH request failed');}
 });
 server.requestTimeout=30000;
 server.headersTimeout=10000;

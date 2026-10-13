@@ -1,3 +1,4 @@
+import {mergeRecord,applyChoices} from './conflicts.js';
 const $=s=>document.querySelector(s);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={jobs:'案件一覧',people:'要員一覧',matching:'マッチング',line:'LINE案件を投入',mail:'メール案件を投入'};
@@ -10,7 +11,7 @@ const modes=Object.fromEntries(work);
 const recruitment={open:'募集中',closed:'募集終了',unknown:'募集状況要確認'};
 let state={jobs:[],people:[],aiConfigured:false},view='jobs',results=[],edit=null,lineDraft=null,mailDraft=null;
 let filterText='',filterStatus='all',matchPerson='',matchJob='',showExcluded=false,matchStatus='all',recommended=[];
-async function api(url,method='GET',data){const r=await fetch(url,{method,headers:method==='GET'?{}:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const v=await r.json();if(!r.ok)throw new Error(v.error || '操作に失敗しました');return v;}
+async function api(url,method='GET',data){const r=await fetch(url,{method,headers:method==='GET'?{}:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const v=await r.json();if(!r.ok){const e=new Error(v.error || '操作に失敗しました');e.status=r.status;e.code=v.code;e.current=v.current;throw e;}return v;}
 function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',4500);}
 async function refresh(){state=await api('/api/state');if(matchJob&&!state.jobs.some(j=>j.id===matchJob))matchJob='';if(matchPerson&&!state.people.some(p=>p.id===matchPerson))matchPerson='';$('#job-count').textContent=state.jobs.length;$('#person-count').textContent=state.people.length;}
 function title(eyebrow,name,text,actions=''){return `<div class="page-title"><div><div class="eyebrow">${eyebrow}</div><h1>${name}</h1><p class="subtitle">${text}</p></div><div class="actions">${actions}</div></div>`;}
@@ -74,7 +75,7 @@ function area(name,label,value='',hint=''){return `<label class="field full"><sp
 function section(t){return `<div class="section-title full">${t}</div>`;}
 const stages='要件定義、基本設計、詳細設計、製造、単体テスト、結合テスト、運用保守';
 function openEditor(kind,record={}){
-  edit={kind,record:structuredClone(record)};$('#form-error').textContent='';$('#editor-title').textContent=(record.id?'編集':'登録')+'：'+(kind==='jobs'?'案件':'要員');const r=record;
+  edit={kind,record:structuredClone(record),base:structuredClone(record)};$('#form-error').textContent='';$('#editor-title').textContent=(record.id?'編集':'登録')+'：'+(kind==='jobs'?'案件':'要員');const r=record;
   const commonActions=record.id?`<div class="full"><button type="button" class="danger" id="delete-record">この${kind==='jobs'?'案件':'要員'}を削除</button></div>`:'';
   $('#editor-fields').innerHTML=`${kind==='jobs'?importReview(r)+mailReview(r):''}${kind==='jobs'?`<section class="panel pad"><h3>案件概要から自動入力</h3><p class="help">もらった概要をそのまま貼り付けてください。LINEから投入と同じ方法で項目を抽出します。抽出後に内容を確認・修正して保存してください。</p><label class="field"><span>もらった案件概要</span><textarea id="job-paste" rows="6" placeholder="案件名：…&#10;勤務地：…&#10;必須スキル：…">${esc(r.raw || '')}</textarea></label><button type="button" class="primary" id="extract-job">概要から項目を抽出</button><p class="help" id="extract-notice" role="status"></p></section>`:''}<div class="form-grid">${kind==='jobs'?[
     section('案件・募集情報'),field('title','案件名',r.title),select('status','募集状況',[['unknown','要確認'],['open','募集中'],['closed','募集終了']],r.status),field('receivedAt','受信日',r.receivedAt,'date'),field('start','開始日',r.start,'date'),field('startText','開始時期の原文',r.startText),field('period','期間',r.period),field('location','勤務地（駅・拠点）',r.location),select('workMode','勤務形態',work,r.workMode),field('officeDays','週あたり出社日数',r.officeDays,'number'),select('visitRequired','初日・定期・緊急出社の有無',[['unknown','要確認'],['yes','あり'],['no','なし']],r.visitRequired),field('visitNotes','出社条件の詳細',r.visitNotes),
@@ -86,12 +87,14 @@ function openEditor(kind,record={}){
     section('プロジェクトごとの経験記録'),'<p class="help full">商用実務には出典・担当内容を記入してください。期間の重複は二重に数えません。スキル名の登録だけでは実務年数に算入しません。</p><div class="full" id="experience-list"></div><div class="full"><button type="button" class="secondary" id="add-experience">＋ 経験を追加</button></div>',commonActions
   ].join('')}</div>`;
   if(kind==='people'){$('#experience-list').innerHTML=(r.experiences||[]).map((e,i)=>experienceHtml(e,i)).join('');$('#add-experience').onclick=()=>{const count=document.querySelectorAll('.experience').length;$('#experience-list').insertAdjacentHTML('beforeend',experienceHtml({},count));bindExperienceRemove();};bindExperienceRemove();}
-  $('#delete-record')?.addEventListener('click',async()=>{if(!confirm('削除しますか？ この操作は取り消せません。'))return;try{await api(`/api/${kind}/${r.id}`,'DELETE',{});$('#editor').close();results=[];await refresh();render();toast('削除しました');}catch(e){$('#form-error').textContent=e.message;}});
+  $('#delete-record')?.addEventListener('click',async()=>{if(!confirm('削除しますか？ この操作は取り消せません。'))return;try{await api(`/api/${kind}/${r.id}`,'DELETE',{revision:r.revision});$('#editor').close();results=[];await refresh();render();toast('削除しました');}catch(e){$('#form-error').textContent=e.message;if(e.code==='record_conflict'){await refresh();toast('削除していません。編集画面を閉じて最新版を確認してください。');}}});
   if(kind==='jobs')$('#extract-job').onclick=async()=>{
     const b=$('#extract-job');b.disabled=true;b.textContent='抽出中…';
     try{
       const parsed=await api('/api/parse','POST',{raw:$('#job-paste').value});
-      openEditor('jobs',{...parsed.draft,...(r.id?{id:r.id}:{}),source:r.source || 'manual',sourceSubject:r.sourceSubject || '',receivedAt:r.receivedAt || '',paymentDays:r.paymentDays,paymentDefault:r.paymentDefault});
+      const previousBase=edit.base;
+      openEditor('jobs',{...parsed.draft,...(r.id?{id:r.id,revision:r.revision}:{}),source:r.source || 'manual',sourceSubject:r.sourceSubject || '',receivedAt:r.receivedAt || '',paymentDays:r.paymentDays,paymentDefault:r.paymentDefault});
+      if(r.id)edit.base=previousBase;
       $('#extract-notice').textContent=(parsed.duplicateId&&parsed.duplicateId!==r.id?'同じ本文の案件が登録済みです。重複を確認してください。 ':'')+'項目を抽出しました。未記載・抽出できない項目は要確認です。複数の募集枠や文章形式の条件も原文と照合してください。';
     }catch(e){$('#extract-notice').textContent=e.message;b.disabled=false;b.textContent='概要から項目を抽出';}
   };
@@ -112,7 +115,16 @@ function readEditor(){const f=new FormData($('#edit-form'));const val=n=>String(
     x.experiences=[...document.querySelectorAll('.experience')].map(el=>{const read=n=>el.querySelector(`[name="${n}"]`).value.trim();return {kind:read('expKind'),title:read('expTitle'),datePrecision:read('expPrecision'),periodText:read('expPeriod'),start:read('expStart'),end:read('expEnd'),skills:split(read('expSkills')),phases:split(read('expPhases')),evidence:read('expEvidence')};});
   }return x;
 }
-$('#edit-form').onsubmit=async e=>{e.preventDefault();const b=$('#edit-form button[type=submit]');b.disabled=true;try{const x=readEditor();await api(`/api/${edit.kind}${edit.record.id?'/'+edit.record.id:''}`,edit.record.id?'PUT':'POST',x);$('#editor').close();results=[];await refresh();if(edit.kind==='jobs' && ['line','mail'].includes(view)){lineDraft=null;mailDraft=null;go('jobs');}else render();toast('保存しました');}catch(err){$('#form-error').textContent=err.message;}finally{b.disabled=false;}};
+$('#edit-form').onsubmit=async e=>{e.preventDefault();const b=$('#edit-form button[type=submit]');b.disabled=true;try{const x=readEditor();await api(`/api/${edit.kind}${edit.record.id?'/'+edit.record.id:''}`,edit.record.id?'PUT':'POST',x);$('#editor').close();results=[];await refresh();if(edit.kind==='jobs' && ['line','mail'].includes(view)){lineDraft=null;mailDraft=null;go('jobs');}else render();toast('保存しました');}catch(err){$('#form-error').textContent=err.message;if(err.code==='record_conflict')showConflict(err.current);}finally{b.disabled=false;}};
+const fieldNames={title:'案件名',name:'氏名・イニシャル',status:'募集状況',salesStatus:'営業状況',rateMax:'単価上限',rateMin:'希望単価下限',rateText:'単価原文',start:'開始日',available:'稼働可能日',startText:'開始時期の原文',location:'勤務地',station:'最寄駅',requirements:'必須スキル・年数',preferred:'尚可',phases:'工程',role:'役割',raw:'原文',experiences:'経験記録',pr:'PR',notes:'備考',foreignAllowed:'外国籍',freelanceAllowed:'個人事業主',paymentDays:'支払いサイト',restrictions:'その他の条件'};
+function showConflict(current){
+ let mine;try{mine=readEditor();}catch{$('#form-error').textContent+=' 入力の形式を修正してから保存してください。';return;}
+ const merge=mergeRecord(edit.base,mine,current),display=value=>value===undefined?'未設定':typeof value==='object'?JSON.stringify(value,null,2):String(value??'未設定');
+ $('#conflict-content').innerHTML=`<p class="callout warn">まだ保存していません。別の画面で変更された最新版と、今回の入力を比較します。違う項目の変更は両方を引き継ぎます。同じ項目が変わっている場合は採用する値を選んでください。</p><p class="help">最新版の更新時刻：${esc(new Date(current.updatedAt).toLocaleString('ja-JP'))}</p>${merge.conflicts.length?`<div class="table-wrap"><table><thead><tr><th>項目</th><th>今回の入力</th><th>保存済みの最新版</th><th>採用する内容</th></tr></thead><tbody>${merge.conflicts.map((f,i)=>`<tr><td>${esc(fieldNames[f.key] || f.key)}</td><td><div class="raw">${esc(display(f.mine))}</div></td><td><div class="raw">${esc(display(f.current))}</div></td><td><select data-conflict-choice="${i}" aria-label="${esc(fieldNames[f.key] || f.key)}で採用する内容"><option value="">選択してください</option><option value="mine">今回の入力</option><option value="current">保存済みの最新版</option></select></td></tr>`).join('')}</tbody></table></div>`:'<p>同じ項目の競合はありません。双方の変更を引き継いで、確認画面へ戻れます。</p>'}<p id="conflict-error" role="alert"></p><div class="actions"><button class="secondary" id="cancel-conflict">入力を保持して戻る</button><button class="primary" id="apply-conflict">選択を反映して編集画面へ戻る</button></div><p class="help">編集画面に戻って内容を確認し、保存ボタンを押してください。反映後も自動保存しません。</p>`;
+ $('#close-conflict').onclick=$('#cancel-conflict').onclick=()=>$('#conflict-dialog').close();
+ $('#apply-conflict').onclick=()=>{const choices={};document.querySelectorAll('[data-conflict-choice]').forEach(el=>choices[merge.conflicts[Number(el.dataset.conflictChoice)].key]=el.value);try{const merged=applyChoices(merge,choices),kind=edit.kind;$('#conflict-dialog').close();openEditor(kind,merged);edit.base=structuredClone(current);$('#form-error').textContent='最新内容と今回の入力を反映しました。確認してから保存してください。';}catch{$('#conflict-error').textContent='すべての競合項目で採用する内容を選択してください。';}};
+ $('#conflict-dialog').showModal();
+}
 $('#close-editor').onclick=$('#cancel-edit').onclick=()=>$('#editor').close();$('#close-details').onclick=()=>$('#details').close();
 function detail(title,html){$('#details-title').textContent=title;$('#details-content').innerHTML=html;$('#details').showModal();}
 function datum(label,value){return `<div class="datum"><span>${label}</span><strong>${esc(value===null || value===undefined || value===''?'要確認':value)}</strong></div>`;}

@@ -15,7 +15,9 @@ test('API: CRUD、重複、入力保持、NG判定、履歴、再起動後の永
   const stop=()=>new Promise(resolve=>{child.once('exit',resolve);child.kill();});
   const call=async(url,method='GET',data,origin)=>{const res=await fetch(`http://127.0.0.1:${port}${url}`,{method,headers:method==='GET'?{}:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:data===undefined?undefined:JSON.stringify(data)});return {status:res.status,value:await res.json()};};
   try{
-    await boot();const raw='案件名：APIテスト\n外国籍：不可\n個人事業主：可';const draft=(await call('/api/parse','POST',{raw})).value.draft;
+    const legacy=new DatabaseSync(dbPath);legacy.exec('CREATE TABLE records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL)');legacy.prepare('INSERT INTO records VALUES (?,?,?,?)').run('legacy-person','people',JSON.stringify({id:'legacy-person',name:'架空旧版要員'}),'2026-10-01');legacy.close();
+    await boot();const old=(await call('/api/people/legacy-person')).value;assert.ok(old.revision);assert.equal((await call('/api/people/legacy-person')).value.revision,old.revision);const legacyUpdated=await call('/api/people/legacy-person','PUT',{...old,name:'架空旧版要員・更新'});assert.equal(legacyUpdated.status,200);assert.notEqual(legacyUpdated.value.revision,old.revision);assert.equal((await call('/api/people/legacy-person','DELETE',{revision:legacyUpdated.value.revision})).status,200);
+    const raw='案件名：APIテスト\n外国籍：不可\n個人事業主：可';const draft=(await call('/api/parse','POST',{raw})).value.draft;
     assert.equal(draft.freelanceAllowed,'yes');const created=await call('/api/jobs','POST',draft);assert.equal(created.status,201);const jobId=created.value.id;
     assert.equal((await call('/api/jobs','POST',draft)).status,409);
     const roleA=await call('/api/jobs','POST',{...draft,position:'上流担当'});
@@ -42,7 +44,7 @@ test('API: CRUD、重複、入力保持、NG判定、履歴、再起動後の永
     const evaluation=await call('/api/match','POST',{jobId,personId:p.value.id});assert.equal(evaluation.value.results[0].status,'対象外');assert.equal((await call('/api/history')).value.length,1);
     assert.equal((await call(`/api/jobs/${jobId}`,'PUT',{...created.value,title:'更新済み'})).status,200);
     await stop();await boot();assert.equal((await call(`/api/jobs/${jobId}`)).value.title,'更新済み');
-    assert.equal((await call(`/api/people/${p.value.id}`,'DELETE',{})).status,200);assert.equal((await call('/api/state')).value.people.length,0);
+    assert.equal((await call(`/api/people/${p.value.id}`,'DELETE',{revision:p.value.revision})).status,200);assert.equal((await call('/api/state')).value.people.length,0);
     assert.equal((await call('/api/match','POST',{personId:'missing'})).status,404);
   }finally{if(child?.exitCode===null)await stop();rmSync(dir,{recursive:true,force:true});}
 });

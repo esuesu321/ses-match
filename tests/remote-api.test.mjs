@@ -19,17 +19,23 @@ test('remote API protects pages and data; two browser clients see the same persi
     assert.equal(verification.code,0,verification.output);assert.ok(!verification.output.includes(password));
     const auth='Basic '+Buffer.from('owner:'+password).toString('base64');
     const call=(url,{authenticated=true,method='GET',body,origin}={})=>new Promise((resolve,reject)=>{
-      const req=request({hostname:'127.0.0.1',port,path:url,method,headers:{Host:'ses.example.test','X-Forwarded-Proto':'https',...(authenticated?{Authorization:auth}:{}),...(method==='GET'?{}:{'Content-Type':'application/json',Origin:origin || 'https://ses.example.test'})}},res=>{
+      const req=request({hostname:'127.0.0.1',port,path:url,method,headers:{Host:'ses.example.test','X-Forwarded-Proto':'https',...(authenticated?{Authorization:auth}:{}),...(method==='GET'?{}:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(JSON.stringify(body || {})),Origin:origin || 'https://ses.example.test'})}},res=>{
         let text='';res.on('data',chunk=>text+=chunk);res.on('end',()=>resolve({status:res.statusCode,json:async()=>JSON.parse(text)}));
-      });req.on('error',reject);req.end(body?JSON.stringify(body):undefined);
+      });req.on('error',reject);req.end(method==='GET'?undefined:JSON.stringify(body || {}));
     });
     for(const url of ['/','/app.js','/api/state','/api/jobs','/api/people','/api/history','/api/health'])assert.equal((await call(url,{authenticated:false})).status,401);
     assert.equal((await call('/api/jobs',{method:'POST',origin:'https://attacker.test',body:{title:'fictional'}})).status,403);
     assert.deepEqual(await (await call('/api/health')).json(),{ok:true});
     const browserA=await call('/api/jobs',{method:'POST',body:{title:'架空の共有案件'}});assert.equal(browserA.status,201);const created=await browserA.json();
     const browserB=await (await call('/api/jobs/'+created.id)).json();assert.equal(browserB.title,'架空の共有案件');
-    assert.equal((await call('/api/jobs/'+created.id,{method:'PUT',body:{title:'架空の更新案件'}})).status,200);
+    assert.equal((await call('/api/jobs/'+created.id,{method:'PUT',body:{...browserB,title:'架空の更新案件'}})).status,200);
     assert.equal((await (await call('/api/jobs/'+created.id)).json()).title,'架空の更新案件');
+    const staleSave=await call('/api/jobs/'+created.id,{method:'PUT',body:{...created,title:'古い画面の入力'}});assert.equal(staleSave.status,409);const conflict=await staleSave.json();assert.equal(conflict.code,'record_conflict');assert.equal(conflict.current.title,'架空の更新案件');
+    assert.equal((await call('/api/jobs/'+created.id,{method:'DELETE',body:{revision:created.revision}})).status,409);
+    assert.equal((await call('/api/jobs/'+created.id,{method:'PUT',body:{title:'版情報なし'}})).status,428);
+    assert.equal((await call('/api/jobs/'+created.id,{method:'DELETE',body:{}})).status,428);
+    const latest=await (await call('/api/jobs/'+created.id)).json();const simultaneous=await Promise.all(['同時A','同時B'].map(title=>call('/api/jobs/'+created.id,{method:'PUT',body:{...latest,title}})));assert.deepEqual(simultaneous.map(r=>r.status).sort(),[200,409]);
+    const after=await (await call('/api/jobs/'+created.id)).json();assert.notEqual(after.revision,latest.revision);assert.ok(['同時A','同時B'].includes(after.title));
     const state=await (await call('/api/state')).json();assert.deepEqual(state.chatGPT,{connected:false,sharing:false});assert.equal(state.aiConfigured,false);assert.equal(state.aiProvider,'chatgpt_plan');
     assert.equal((await call('/api/match',{method:'POST',body:{useAi:true}})).status,400);
   }finally {
