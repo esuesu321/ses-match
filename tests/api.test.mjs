@@ -33,6 +33,9 @@ test('API: CRUD、重複、入力保持、NG判定、履歴、再起動後の永
     assert.equal((await call('/api/import/mail','POST',{raw:mailRaw})).value.duplicateId,savedMail.value.id);
     assert.equal((await call('/api/import/mail','POST',{raw:'別本文',useAi:true,model:'test'})).status,409);
     assert.equal((await call('/api/import/mail','POST',{raw:'a'.repeat(20001)})).status,400);
+    const uncertain=await call('/api/import/mail','POST',{raw:'案件名：架空条件確認\n単価：70万円〜\n開始：2026/11\n外国籍：条件付き可'});assert.equal(uncertain.status,200);assert.equal(uncertain.value.draft.rateMax,null);assert.equal(uncertain.value.draft.start,'');assert.equal(uncertain.value.draft.foreignAllowed,'unknown');assert.ok(uncertain.value.warnings.some(w=>w.includes('単価')));
+    assert.equal((await call('/api/import/mail','POST',{raw:'案件名：架空A\n案件名：架空B'})).status,400);
+
 
     assert.equal((await call('/api/jobs','POST',{title:'別サイト'},'https://example.com')).status,403);
     const p=await call('/api/people','POST',{name:'API架空要員',nationality:'中国',contract:'freelance',experiences:[]});assert.equal(p.status,201);

@@ -17,3 +17,21 @@ test('AI下書き: 原文にない引用は拒否、勝手な公開先・状態�
  assert.throws(()=>reviewedAiDraft({...response,evidence:[{field:'title',quote:'実在しない根拠'}]},input,input.raw));
  for(const bad of [{...response,multiple:true},{...response,isJob:false},{...response,fields:{rateMax:'70'},evidence:[{field:'rateMax',quote:'外国籍：不可'}]}])assert.throws(()=>reviewedAiDraft(bad,input,input.raw));
 });
+
+test('メール手動取り込み: 複数案件を一つの条件として保存させない',()=>{assert.throws(()=>manualMailDraft({raw:'案件名：架空A\n必須：Java\n案件名：架空B\n必須：Python'}));});
+test('AI取り込み: 原文の契約可否・単価・開始日と矛盾する値を拒否する',()=>{
+ for(const [field,value,quote] of [['foreignAllowed','yes','外国籍：不可'],['rateMax',80,'単価：70万円'],['start','2026-11-02','開始：2026/11/01']])assert.throws(()=>reviewedAiDraft({isJob:true,multiple:false,fields:{[field]:value},evidence:[{field,quote}]},{...input,raw:quote},quote));
+});
+test('AI取り込み: 曖昧な可否・単価下限・年月を確定しない',()=>{
+ for(const [field,value,quote] of [['foreignAllowed','yes','外国籍：条件付き可'],['rateMax',70,'単価：70万円〜'],['start','2026-11-01','開始：2026/11']]){const draft=reviewedAiDraft({isJob:true,multiple:false,fields:{[field]:value},evidence:[{field,quote}]},{...input,raw:quote},quote);assert.ok(draft[field]===undefined || draft[field]==='unknown');assert.ok(JSON.parse(draft.importWarnings).length);}
+});
+test('AI取り込み: 尚可を必須に変えたり、引用にない技術を追加したりしない',()=>{
+ const raw='必須：Java\n尚可：Python';for(const skill of ['Python','Rust'])assert.throws(()=>reviewedAiDraft({isJob:true,multiple:false,fields:{requirements:[{skill,months:0}]},evidence:[{field:'requirements',quote:raw}]},{...input,raw},raw));
+});
+
+test('AI取り込み: JavaScriptをJavaとみなさず、必須年数を増やさない',()=>{
+ for(const [skill,months,quote] of [['Java',0,'必須：JavaScript'],['Java',60,'必須：Java 3年以上']])assert.throws(()=>reviewedAiDraft({isJob:true,multiple:false,fields:{requirements:[{skill,months}]},evidence:[{field:'requirements',quote}]},{...input,raw:quote},quote));
+ const quote='必須：Java 3年以上';const draft=reviewedAiDraft({isJob:true,multiple:false,fields:{requirements:[{skill:'Java',months:36}]},evidence:[{field:'requirements',quote}]},{...input,raw:quote},quote);assert.equal(draft.requirements[0].months,36);
+});
+
+test('AI取り込み: 短い引用で必須年数を消すことを拒否する',()=>{const raw='必須：Java 3年以上';assert.throws(()=>reviewedAiDraft({isJob:true,multiple:false,fields:{requirements:[{skill:'Java',months:0}]},evidence:[{field:'requirements',quote:'Java'}]},{...input,raw},raw));});

@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {match} from './lib/matching.mjs';
-import {parseLine} from './lib/parser.mjs';
+import {parseLine,importWarnings} from './lib/parser.mjs';
 import {mailInput,manualMailDraft} from './lib/mail-import.mjs';
 import {validate} from './lib/validation.mjs';
 import {aiConfigured,assessSkills,usesChatGPTPlan,chatGPTStatus,chatGPTModels,extractMail} from './lib/ai.mjs';
@@ -38,7 +38,7 @@ const server=http.createServer(async(req,res)=>{
       if(!usesChatGPTPlan())bad('ChatGPT契約枠への接続を設定してください',409);
       return json(res,{models:await chatGPTModels()});
     }
-    if(url.pathname==='/api/parse' && req.method==='POST'){const input=await body(req);if(typeof input.raw!=='string' || !input.raw.trim())bad('案件本文を貼り付けてください');const parsed=parseLine(input.raw);const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===input.raw.normalize('NFKC').trim());return json(res,{draft:parsed,duplicateId:duplicate?.id || null,warnings:['ラベル形式の項目だけを抽出しています。登録前に本文と照合してください。','年月のみの開始時期、商流、精算、出社条件などは手動確認が必要です。']});}
+    if(url.pathname==='/api/parse' && req.method==='POST'){const input=await body(req);if(typeof input.raw!=='string' || !input.raw.trim())bad('案件本文を貼り付けてください');const parsed=parseLine(input.raw);const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===input.raw.normalize('NFKC').trim());return json(res,{draft:parsed,duplicateId:duplicate?.id || null,warnings:[...importWarnings(parsed),'ラベル形式の項目だけを抽出しています。登録前に本文と照合してください。','年月のみの開始時期、商流、精算、出社条件などは手動確認が必要です。']});}
     if(url.pathname==='/api/import/mail' && req.method==='POST'){
       const input=await body(req);const m=mailInput(input);
       const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===m.raw.normalize('NFKC').trim());
@@ -51,7 +51,7 @@ const server=http.createServer(async(req,res)=>{
         mailBusy=true;
         try{draft=await extractMail(m,{model:input.model});}catch{bad('AI抽出を完了できませんでした。本文を保持したまま手動抽出を利用できます',502);}finally{mailBusy=false;}
       }else draft=manualMailDraft(m);
-      return json(res,{draft,duplicateId:null,warnings:['まだ登録されていません。原文と全項目を照合・修正して保存してください。',input.useAi?'AIの引用根拠も確認してください。引用があっても解釈が正しいとは限りません。':'ラベル形式だけの抽出です。文章形式や複数案件は1案件ずつ手動で確認してください。','未記載の支払いサイトは35日を初期値としています。実際の条件は確認が必要です。']});
+      return json(res,{draft,duplicateId:null,warnings:[...importWarnings(draft),'まだ登録されていません。原文と全項目を照合・修正して保存してください。',input.useAi?'AIの引用根拠も確認してください。引用があっても解釈が正しいとは限りません。':'ラベル形式だけの抽出です。文章形式や複数案件は1案件ずつ手動で確認してください。','未記載の支払いサイトは35日を初期値としています。実際の条件は確認が必要です。']});
     }
     const recordRoute=url.pathname.match(/^\/api\/(jobs|people)(?:\/([^/]+))?$/);
     if(recordRoute){const [,kind,id]=recordRoute;
