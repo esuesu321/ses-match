@@ -7,13 +7,14 @@ import {randomUUID,createHash} from 'node:crypto';
 import {match} from './lib/matching.mjs';
 import {parseLine} from './lib/parser.mjs';
 import {validate} from './lib/validation.mjs';
-import {aiConfigured,assessSkills} from './lib/ai.mjs';
+import {aiConfigured,assessSkills,usesChatGPTPlan,chatGPTStatus,chatGPTModels} from './lib/ai.mjs';
 import {createAccess} from './lib/access.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 if(existsSync(path.join(root,'.env'))) process.loadEnvFile(path.join(root,'.env'));
 process.umask(0o077);
-mkdirSync(path.join(root,'data'),{recursive:true,mode:0o700});
-const db=new DatabaseSync(process.env.SES_DB || path.join(root,'data','ses.sqlite'));
+const dbPath=process.env.SES_DB || path.join(root,'data','ses.sqlite');
+mkdirSync(path.dirname(dbPath),{recursive:true,mode:0o700});
+const db=new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS records_kind ON records(kind); CREATE TABLE IF NOT EXISTS evaluations (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, person_id TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);`);
 const list=kind=>db.prepare('SELECT body FROM records WHERE kind=? ORDER BY updated_at DESC').all(kind).map(r=>JSON.parse(r.body));
 const get=(kind,id)=>{const r=db.prepare('SELECT body FROM records WHERE kind=? AND id=?').get(kind,id);return r?JSON.parse(r.body):null;};
@@ -28,7 +29,11 @@ const server=http.createServer(async(req,res)=>{
     const denied=access(req,res);if(denied)return json(res,{error:denied.message},denied.status);
     const url=new URL(req.url,`http://127.0.0.1:${port}`);
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
-    if(url.pathname==='/api/state' && req.method==='GET')return json(res,{jobs:list('jobs'),people:list('people'),aiConfigured:aiConfigured(),integrations:[{name:'LINE',state:'manual'},{name:'Gmail',state:'planned'},{name:'Google Drive',state:'planned'}]});
+    if(url.pathname==='/api/state' && req.method==='GET')return json(res,{jobs:list('jobs'),people:list('people'),aiConfigured:aiConfigured(),aiProvider:usesChatGPTPlan()?'chatgpt_plan':'legacy',chatGPT:usesChatGPTPlan()?chatGPTStatus():null,integrations:[{name:'LINE',state:'manual'},{name:'Gmail',state:'planned'},{name:'Google Drive',state:'planned'}]});
+    if(url.pathname==='/api/chatgpt/models' && req.method==='GET') {
+      if(!usesChatGPTPlan())bad('ChatGPT契約枠への接続を設定してください',409);
+      return json(res,{models:await chatGPTModels()});
+    }
     if(url.pathname==='/api/parse' && req.method==='POST'){const input=await body(req);if(typeof input.raw!=='string' || !input.raw.trim())bad('案件本文を貼り付けてください');const parsed=parseLine(input.raw);const duplicate=list('jobs').find(j=>j.raw?.normalize('NFKC').trim()===input.raw.normalize('NFKC').trim());return json(res,{draft:parsed,duplicateId:duplicate?.id || null,warnings:['ラベル形式の項目だけを抽出しています。登録前に本文と照合してください。','年月のみの開始時期、商流、精算、出社条件などは手動確認が必要です。']});}
     const recordRoute=url.pathname.match(/^\/api\/(jobs|people)(?:\/([^/]+))?$/);
     if(recordRoute){const [,kind,id]=recordRoute;
@@ -39,12 +44,13 @@ const server=http.createServer(async(req,res)=>{
     }
     if(url.pathname==='/api/match' && req.method==='POST'){
       const input=await body(req);if(input.useAi!==undefined && typeof input.useAi!=='boolean')bad('AI指定が不正です');
+      if(input.useAi && usesChatGPTPlan() && (typeof input.model!=='string' || !input.model || input.model.length>200))bad('ChatGPTモデルを選択してください');
       const people=input.personId?[get('people',input.personId)]:list('people');const jobs=input.jobId?[get('jobs',input.jobId)]:list('jobs');
       if(people.some(p=>!p)||jobs.some(j=>!j))bad('案件／要員が見つかりません',404);
       if(input.useAi && jobs.length*people.length>10)bad('AI評価は一度に10組まで。案件・要員を絞り込んでください');
       const results=[];
       for(const j of jobs)for(const p of people){const result=match(j,p,new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}));result.jobName=j.title;result.personName=p.name;
-        if(input.useAi){try{result.ai=await assessSkills(j,p,result);}catch{result.ai={state:'failed',message:'AI評価に失敗しました。ルール判定は表示できます。再実行してください。'};}}
+        if(input.useAi){try{result.ai=await assessSkills(j,p,result,{model:input.model});}catch{result.ai={state:'failed',message:usesChatGPTPlan()?'ChatGPTの利用枠・接続状態を確認してください。ルール判定は表示できます。':'AI評価に失敗しました。ルール判定は表示できます。再実行してください。'};}}
         else result.ai={state:'not_requested',message:aiConfigured()?'ルール判定のみ（AI評価を選択して再実行できます）':'AI未接続・営業ルールによる判定'};
         result.fingerprint=createHash('sha256').update(JSON.stringify([j,p])).digest('hex');
         db.prepare('INSERT INTO evaluations VALUES (?,?,?,?,?)').run(randomUUID(),j.id,p.id,JSON.stringify(result),result.evaluatedAt);results.push(result);

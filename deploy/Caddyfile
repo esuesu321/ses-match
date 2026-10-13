@@ -1,0 +1,8 @@
+# SES_DOMAIN is supplied by the server administrator, never from a request.
+{$SES_DOMAIN} {
+    reverse_proxy 127.0.0.1:4317 {
+        header_up Host {$SES_DOMAIN}
+        header_up X-Forwarded-Proto https
+    }
+    # Access logging is intentionally not enabled: no auth headers or source data.
+}

@@ -17,3 +17,10 @@ import-yy.mjs
 import-bank.mjs
 node_modules/
 *.log
+chatgpt/
+connection.json
+host.json
+*-auth.json
+*.pem
+*.key
+backups/

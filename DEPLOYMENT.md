@@ -1,13 +1,14 @@
 # 本人専用・複数PC運用
 
 コード公開と実データ公開を分離する。コードのライセンスはMIT。
-サーバー契約・公開設定変更・ChatGPT接続はこの変更で実行していない。
+2026-10-13にGitHubのコードを公開。タグ・リリースなし、Actions実行履歴0件を確認。
+サーバー契約・実サーバー配置・ChatGPTの実認証はまだ実行していない。
 
 ## 構成
 
 自宅／会社のブラウザ → HTTPSプロキシ → loopbackのNode.js → 保護したSQLite。
 2台のPCは同じURLへアクセスする。実データはサーバー側の1つのDBに保存する。
-Node.jsは127.0.0.1から変更しない。4317番を外部へ開けない。
+Node.jsは127.0.0.1から変更しない。4317番を外部へ開けない。管理用SSHは鍵認証とし、可能な範囲で接続元を制限する。
 最初は本人専用。ブラウザ標準のBasic認証をHTTPS上で使用する。
 社内利用へ進む前に個別アカウント・権限・監査記録へ移行する。
 
@@ -21,7 +22,37 @@ Node.jsは127.0.0.1から変更しない。4317番を外部へ開けない。
 SES_PUBLIC_ORIGIN=https://実際のホスト名、SES_AUTH_USER、SES_AUTH_PASSWORDを設定する。
 パスワードは24文字以上のランダム値とし、パスワード管理ツールで保存する。
 SES_DBは所有者だけが読める保存先を指定する。空欄の場合はdata/ses.sqlite。
-AI_ENDPOINT、AI_API_KEY、AI_MODELは空欄のままにする。別料金APIを使用しない。
+AI_ENDPOINT、AI_API_KEY、AI_MODELは空欄のままにする。SES_AI_MODE=chatgptを設定し、別料金APIを使用しない。
+
+## ChatGPTの初回接続とサーバー移送
+
+1. 本人PCで`npm ci --ignore-scripts`後に`npm run chatgpt:connect`を実行。
+2. 表示された認証URLを同じPCのブラウザで開き、ChatGPTアカウント・ワークスペース・利用枠許可を確認。
+3. PCで`npm run chatgpt:verify`を実行。架空の短文で応答完了を確認する。
+4. サーバーでSES_CHATGPT_DIRを設定し、`node scripts/chatgpt-connect.mjs prepare-host`を実行する。サーバー専用のhost.jsonを作る。
+5. PCのconnection.jsonだけをSSH等の暗号化された経路でサーバーの保護したSES_CHATGPT_DIRへ移送。ローカルのhost.jsonでサーバーのhost.jsonを上書きしない。
+6. サーバー上のconnection.jsonを実行ユーザー所有・0600、ディレクトリを0700にする。Windowsはユーザープロファイルのアクセス制御も確認する。
+7. サーバーで`npm run chatgpt:verify`を実行し、画面のモデル取得と架空データでのAI照合を確認する。
+8. PCとサーバーが同じrefresh_tokenを同時に更新しない。移送後はサーバーだけが接続を管理する。
+
+認証情報をチャット・メール・GitHubへ貼り付けない。コードを公開しただけで実接続成功とは扱わない。
+再認証が必要な場合はサーバーを停止してから同じ手順で更新する。
+接続解除はChatGPTの設定から連携を解除し、サーバーの保護された認証情報を削除する。
+
+公式根拠：
+- https://developers.openai.com/siwc/token-sharing-open-source/sign-in
+- https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms
+- https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+
+## Linux配置用の設定見本
+
+deploy/ses-match.serviceは専用ユーザーでNodeを常時実行するsystemdの見本。
+deploy/CaddyfileはHTTPSの発行・更新とlocalhostへの転送を行うCaddyの見本。
+実機での起動・設定検証は未完了。Nodeの実パス、ホスト名、ファイル権限を配置時に確認する。
+コードは/opt/ses-match、保護した環境設定は/etc/ses-match/app.env、実データとChatGPT認証は/var/lib/ses-matchに分離。
+保護した設定ファイルにSES_PUBLIC_ORIGIN、SES_AUTH_USER、SES_AUTH_PASSWORD、SES_AI_MODE=chatgptを設定。
+Caddy実行環境のSES_DOMAINは、SES_PUBLIC_ORIGINのホスト名と一致させる。
+サーバーでは専用ユーザーを作成し、コードを読み取り専用、データ保存先だけ書き込み可能にする。
 
 ## リバースプロキシ条件
 
@@ -45,7 +76,7 @@ AI_ENDPOINT、AI_API_KEY、AI_MODELは空欄のままにする。別料金APIを
 
 ## 現在の制限
 
-ChatGPT契約枠のOAuth接続は未実装・未検証。
+ChatGPT契約枠のOAuth接続・Responses呼び出しは実装済み、実アカウントでは未検証。
 コードを公開しただけで、AIマッチングが使えるとは扱わない。
 ブラウザ標準認証は明示的ログアウトのUXに制約があるため、共有PCでは使用しない。
 本変更は絶対的な安全性を保証しない。実配置のTLS・権限・更新・バックアップ確認が必要。

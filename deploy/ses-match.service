@@ -1,0 +1,30 @@
+[Unit]
+Description=SES MATCH owner-only application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ses-match
+Group=ses-match
+WorkingDirectory=/opt/ses-match
+EnvironmentFile=/etc/ses-match/app.env
+ExecStart=/usr/bin/node /opt/ses-match/server.mjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StateDirectory=ses-match
+StateDirectoryMode=0700
+Environment=SES_DB=/var/lib/ses-match/ses.sqlite
+Environment=SES_CHATGPT_DIR=/var/lib/ses-match/chatgpt
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ses-match
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
