@@ -74,6 +74,11 @@ Gmail・Googleドライブからの自動取り込みは未接続です。LINE�
 
 ## ChatGPT契約枠の接続（実接続は未検証）
 
+Windowsの場合は、ZIPを展開してCONNECT_CHATGPT.cmdをダブルクリックします。
+Node.js 24以上が必要です。依存ライブラリを導入し、ブラウザで本人の認証を行った後、架空の短文で接続確認します。
+成功時は黒い画面に「SUCCESS: ChatGPT plan connection was verified.」と表示されます。
+実際の本人PCでの動作確認はこれからです。
+
 OpenAIの公式OSS手順に沿ったOAuth接続、モデル取得、Responsesのストリーミング評価を実装しました。
 別料金APIへの自動切替はありません。`.env`の`SES_AI_MODE=chatgpt`を指定します。
 PCで`npm run chatgpt:connect`を実行し、表示されたURLを**同じPCのブラウザ**で開いて許可します。
