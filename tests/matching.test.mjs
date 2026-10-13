@@ -10,7 +10,7 @@ import {validate} from '../lib/validation.mjs';
 const today='2026-09-30';
 const job={id:'j',title:'テスト',status:'open',receivedAt:today,foreignAllowed:'yes',freelanceAllowed:'yes',maxTiers:1,employeeOnly:'no',maxAge:50,location:'渋谷駅',workMode:'hybrid',officeDays:2,rateMax:75,start:'2026-11-01',requirements:[{skill:'Java',months:36}],phases:['詳細設計'],role:'Webアプリ実装'};
 const exp={kind:'commercial',start:'2022-01-01',end:'2026-08-01',skills:['Java'],phases:['詳細設計'],evidence:'受託ECシステムの設計・Java実装、スキルシートNo.1'};
-const person={id:'p',name:'デモ',nationality:'中国',contract:'freelance',tiers:0,age:42,station:'西葛西駅',onsite:'yes',maxCommute:75,commute:[{location:'渋谷駅',minutes:55,possible:'yes'}],rateMin:65,available:'2026-10-01',experiences:[exp]};
+const person={id:'p',name:'デモ',salesStatus:'open',nationality:'中国',contract:'freelance',tiers:0,age:42,station:'西葛西駅',onsite:'yes',maxCommute:75,commute:[{location:'渋谷駅',minutes:55,possible:'yes'}],rateMin:65,available:'2026-10-01',experiences:[exp]};
 const result=(j={},p={})=>match({...job,...j},{...person,...p},today);
 const check=(r,key)=>r.checks.find(c=>c.key===key);
 test('外国籍不可は明確に除外',()=>assert.equal(result({foreignAllowed:'no'}).status,'対象外'));
@@ -59,3 +59,5 @@ test('自由記述制限を営業確認に残す',()=>assert.equal(check(result(
 test('LINE抽出で未記載条件を捏造しない',()=>{const p=parseLine('案件名：例\n必須：Java 3年以上、SQL 2年以上\n外国籍：不可');assert.equal(p.foreignAllowed,'no');assert.equal(p.freelanceAllowed,'unknown');assert.equal(p.rateMax,null);assert.equal(p.workMode,'unknown');assert.deepEqual(p.requirements,[{skill:'Java',months:36},{skill:'SQL',months:24}]);});
 test('バリデーションは期間逆転・証跡なしを拒否',()=>{assert.throws(()=>validate('people',{name:'例',experiences:[{...exp,end:'2020-01-01'}]}));assert.throws(()=>validate('people',{name:'例',experiences:[{...exp,evidence:''}]}));});
 test('不正な列挙型・数値・日付を拒否',()=>{assert.throws(()=>validate('jobs',{title:'例',rateMax:-1}));assert.throws(()=>validate('jobs',{title:'例',workMode:'sometimes'}));assert.throws(()=>validate('jobs',{title:'例',start:'2026-02-31'}));});
+
+test('参画決定・営業休止は対象外、営業状況不明は要確認',()=>{assert.equal(result({}, {salesStatus:'placed'}).status,'対象外');assert.equal(result({}, {salesStatus:'paused'}).status,'対象外');assert.equal(check(result({}, {salesStatus:'unknown'}),'salesStatus').status,'要確認');});

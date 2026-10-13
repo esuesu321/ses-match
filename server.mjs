@@ -9,6 +9,7 @@ import {parseLine} from './lib/parser.mjs';
 import {validate} from './lib/validation.mjs';
 import {aiConfigured,assessSkills,usesChatGPTPlan,chatGPTStatus,chatGPTModels} from './lib/ai.mjs';
 import {createAccess} from './lib/access.mjs';
+import {recommendationFor,selectRecommendations} from './lib/recommendations.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 if(existsSync(path.join(root,'.env'))) process.loadEnvFile(path.join(root,'.env'));
 process.umask(0o077);
@@ -52,10 +53,11 @@ const server=http.createServer(async(req,res)=>{
       for(const j of jobs)for(const p of people){const result=match(j,p,new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}));result.jobName=j.title;result.personName=p.name;
         if(input.useAi){try{result.ai=await assessSkills(j,p,result,{model:input.model});}catch{result.ai={state:'failed',message:usesChatGPTPlan()?'ChatGPTの利用枠・接続状態を確認してください。ルール判定は表示できます。':'AI評価に失敗しました。ルール判定は表示できます。再実行してください。'};}}
         else result.ai={state:'not_requested',message:aiConfigured()?'ルール判定のみ（AI評価を選択して再実行できます）':'AI未接続・営業ルールによる判定'};
+        result.recommendation=recommendationFor(result);
         result.fingerprint=createHash('sha256').update(JSON.stringify([j,p])).digest('hex');
         db.prepare('INSERT INTO evaluations VALUES (?,?,?,?,?)').run(randomUUID(),j.id,p.id,JSON.stringify(result),result.evaluatedAt);results.push(result);
       }
-      const order={'問題なし':0,'要確認':1,'懸念あり':2,'対象外':3};results.sort((a,b)=>order[a.status]-order[b.status] || b.score-a.score);return json(res,{results});
+      const order={'問題なし':0,'要確認':1,'懸念あり':2,'対象外':3};results.sort((a,b)=>order[a.status]-order[b.status] || b.score-a.score);return json(res,{results,recommendations:selectRecommendations(results)});
     }
     if(url.pathname==='/api/history' && req.method==='GET')return json(res,db.prepare('SELECT body FROM evaluations ORDER BY created_at DESC LIMIT 50').all().map(r=>JSON.parse(r.body)));
     if(url.pathname.startsWith('/api/'))bad('該当する操作はありません',404);

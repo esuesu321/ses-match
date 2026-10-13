@@ -19,7 +19,7 @@ try {
   if(!state.jobs.length && !state.people.length) {
     const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
     const start=today.slice(0,7)+'-01';
-    const person={name:'架空テスト要員A',nationality:'中国',contract:'freelance',tiers:0,age:30,station:'架空の最寄駅',onsite:'yes',maxCommute:75,rateMin:65,available:start,skills:['Java','SQL'],phases:['詳細設計','実装','単体テスト'],experiences:[{kind:'commercial',start:'2022-01-01',end:start,skills:['Java','SQL'],phases:['詳細設計','実装','単体テスト'],role:'Webアプリ実装',evidence:'架空のテスト経歴No.1：JavaとSQLを用いたECシステムの設計、実装、単体テストを担当。実在する人物の経歴ではありません。'}],pr:'すべて架空の動作確認用データです。',notes:'営業利用・実在要員への提案禁止。'};
+    const person={name:'架空テスト要員A',salesStatus:'open',nationality:'中国',contract:'freelance',tiers:0,age:30,station:'架空の最寄駅',onsite:'yes',maxCommute:75,rateMin:65,available:start,skills:['Java','SQL'],phases:['詳細設計','実装','単体テスト'],experiences:[{kind:'commercial',start:'2022-01-01',end:start,skills:['Java','SQL'],phases:['詳細設計','実装','単体テスト'],role:'Webアプリ実装',evidence:'架空のテスト経歴No.1：JavaとSQLを用いたECシステムの設計、実装、単体テストを担当。実在する人物の経歴ではありません。'}],pr:'すべて架空の動作確認用データです。',notes:'営業利用・実在要員への提案禁止。'};
     await call('/api/people','POST',person);
     const base={status:'open',receivedAt:today,source:'demo',sourceText:'架空の動作確認用案件。営業利用禁止。',foreignAllowed:'yes',freelanceAllowed:'yes',employeeOnly:'no',maxTiers:1,maxAge:50,workMode:'remote',visitRequired:'no',rateMax:70,start,requirements:[{skill:'Java',months:36}],phases:['詳細設計','実装'],role:'Java Webアプリの設計・実装',notes:'実在しないテスト案件です。'};
     for(const job of [{...base,title:'架空案件1：Java経験が合う案件'},{...base,title:'架空案件2：外国籍不可（対象外の確認）',foreignAllowed:'no'},{...base,title:'架空案件3：個人事業主不可（対象外の確認）',freelanceAllowed:'no'}])await call('/api/jobs','POST',job);
