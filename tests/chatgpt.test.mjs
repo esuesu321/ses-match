@@ -59,7 +59,7 @@ test('host identity persists and protected credentials never reach public status
     const client=createPlanClient({dir,request});assert.deepEqual(client.status(),{connected:true,sharing:true});
     assert.equal(await client.infer({model:'test-model',input:'fictional',instructions:'test'}),'done');
     const sent=JSON.parse(calls.find(c=>c.url.endsWith('/responses')).options.body);
-    assert.equal(sent.store,false);assert.equal(sent.stream,true);assert.equal(calls[0].url,'https://api.openai.com/v1/models');
+    assert.deepEqual(sent.input,[{role:'user',content:'fictional'}]);assert.equal(sent.store,false);assert.equal(sent.stream,true);assert.equal(calls[0].url,'https://api.openai.com/v1/models');
     await assert.rejects(client.infer({model:'unknown',input:'test'}));
   }finally {rmSync(dir,{recursive:true,force:true});}
 });
